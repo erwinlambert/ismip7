@@ -1,36 +1,45 @@
 import xarray as xr
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-#import scipy.signal as sig
 import numpy as np
 import cmocean as cmo
 
 from run import Run
 from run import dpm
 
+# Region class with functions for processing and plotting
 class Region:
     def __init__(self, region,model,refmodel='UKESM1-0-LL',k0=0,k1=6000):
         # Get volume CMIP
         self.region = region
-        self.model = model
-        self.refmodel = refmodel
-        self.k0 = k0
-        self.k1 = k1
+        self.model = model # Reference model considered 'truth'
+        self.refmodel = refmodel # Model to be bias corrected
+        self.k0 = k0 # Start depth (top)
+        self.k1 = k1 # End depth (bottom)
 
+        # Read historical period of both refmodel and model to get started
         self.get_historical()
 
     def get_historical(self):
-        #self.get_cmip_fixed()
-        #self.get_woa()
-        #self.get_woa()
-        #self.ref = self.woa
+        # Get data for refmodel over historical period
         self.ref = Run(self.refmodel,self.region,'historical',1995,2015,k0=self.k0,k1=self.k1)
+
+        # Get data for model over historical period
         self.prd = Run(self.model,self.region,'historical',1995,2015,k0=self.k0,k1=self.k1)
+
+        # Define the bias in the model with respect to the reference model
         self.get_bias()
 
     def get_future(self,run,y0,y1):
+        # Get data for model over some future period y0 - y1
         self.fut = Run(self.model,self.region,run,y0,y1,k0=self.k0,k1=self.k1)
+
+        # Compute change in T and S between future and historical in T,S space of model
+        # Example: between y0 and y1, the water mass that historically had a temperature of X degrees and a salinity of Y psu
+        # has warmed by an amount of Z degrees.
         self.get_delta()
+
+        # Construct deltaT and deltaS on the grid of the reference model for this future period
         self.get_anom()
 
     def plot_region_cmip(self,ii,jj):
@@ -114,6 +123,8 @@ class Region:
             #Ax.invert_yaxis()
 
     def get_woa(self):
+        # Get WOA23 data
+
         self.woa = Run('woa',1991,2020)
 
         ds = xr.open_dataset('/usr/people/lambert/work/projects/data/woa23/woa23_decav91C0_t00_04.nc',decode_cf=False)
@@ -144,7 +155,7 @@ class Region:
         self.woa.Vb,self.woa.Sb,self.woa.Tb = np.histogram2d(self.woa.S.flatten()[self.woa.V.flatten()>0],self.woa.T.flatten()[self.woa.V.flatten()>0],bins=100,weights=self.woa.V.flatten()[self.woa.V.flatten()>0])
 
     def get_cmip_fixed(self,model):
-        'Get fixed CMIP variables from historical run'
+        # Get fixed variables from a CMIP model from the historical run
         ds2 = xr.open_dataset(f'/usr/people/lambert/work2/data/cmip6/{model}/historical/thkcello/thkcello_Omon_{model}_historical_r1i1p1f1_gn_185001-185012.nc')
         ds2 = ds2.sel(j=slice(self.jc0,self.jc1),i=slice(self.ic0,self.ic1),lev=slice(self.k0,self.k1))
         ds2 = ds2.isel(time=0)
@@ -227,14 +238,17 @@ class Region:
 
     def get_delta(self):
 
+        # Get difference in T and S between future and historical period
         self.fut.dTraw = self.fut.T-self.prd.T
         self.fut.dSraw = self.fut.S-self.prd.S
 
+        # Compute binned deltaT and deltaS on historical S- and T- bins
         VTdel,Sdel,Tdel = np.histogram2d(self.prd.S.flatten()[self.prd.V.flatten()>0],self.prd.T.flatten()[self.prd.V.flatten()>0],bins=100,weights=(self.prd.V*self.fut.dTraw).flatten()[self.prd.V.flatten()>0])
         self.fut.deltaT = VTdel/self.prd.Vb
         VSdel,Sdel,Tdel = np.histogram2d(self.prd.S.flatten()[self.prd.V.flatten()>0],self.prd.T.flatten()[self.prd.V.flatten()>0],bins=100,weights=(self.prd.V*self.fut.dSraw).flatten()[self.prd.V.flatten()>0])
         self.fut.deltaS = VSdel/self.prd.Vb
 
+        # Create filled binned deltaT and deltaS through extrapolation
         self.fut.deltaTf = self.fill_delta(self.fut.deltaT)
         self.fut.deltaSf = self.fill_delta(self.fut.deltaS)
 
@@ -287,6 +301,7 @@ class Region:
         self.fut.dScorb = VSdel/self.ref.Vb
 
     def get_profiles(self):
+        # Construct vertical profiles of reference T and S
 
         self.ref.Tz = np.nan*np.ones(len(self.ref.depth))
         self.ref.Sz = np.nan*np.ones(len(self.ref.depth))
